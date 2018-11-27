@@ -21,7 +21,7 @@
 
 , # Whether to build dynamic libs for the standard library (on the target
   # platform). Static libs are always built.
-  enableShared ? !stdenv.targetPlatform.isWindows && !stdenv.targetPlatform.useAndroidPrebuilt
+  enableShared ? !stdenv.targetPlatform.isWindows && !stdenv.targetPlatform.useiOSPrebuilt
 
 , # Whetherto build terminfo.
   enableTerminfo ? !stdenv.targetPlatform.isWindows
@@ -122,6 +122,24 @@ stdenv.mkDerivation (rec {
     export NIX_LDFLAGS+=" -rpath $out/lib/ghc-${version}"
   '' + stdenv.lib.optionalString stdenv.isDarwin ''
     export NIX_LDFLAGS+=" -no_dtrace_dof"
+  '' + stdenv.lib.optionalString targetPlatform.useAndroidPrebuilt ''
+    sed -i -e '5i ,("armv7a-unknown-linux-androideabi", ("e-m:e-p:32:32-i64:64-v128:64:128-a:0:32-n32-S64", "cortex-a8", ""))' llvm-targets
+  '' + stdenv.lib.optionalString targetPlatform.isMusl ''
+      echo "patching llvm-targets for musl targets..."
+      echo "Cloning these existing '*-linux-gnu*' targets:"
+      grep linux-gnu llvm-targets | sed 's/^/  /'
+      echo "(go go gadget sed)"
+      sed -i 's,\(^.*linux-\)gnu\(.*\)$,\0\n\1musl\2,' llvm-targets
+      echo "llvm-targets now contains these '*-linux-musl*' targets:"
+      grep linux-musl llvm-targets | sed 's/^/  /'
+
+      echo "And now patching to preserve '-musleabi' as done with '-gnueabi'"
+      # (aclocal.m4 is actual source, but patch configure as well since we don't re-gen)
+      for x in configure aclocal.m4; do
+        substituteInPlace $x \
+          --replace '*-android*|*-gnueabi*)' \
+                    '*-android*|*-gnueabi*|*-musleabi*)'
+      done
   '';
 
   # TODO(@Ericson2314): Always pass "--target" and always prefix.
@@ -131,8 +149,8 @@ stdenv.mkDerivation (rec {
   configureFlags = [
     "--datadir=$doc/share/doc/ghc"
     "--with-curses-includes=${ncurses.dev}/include" "--with-curses-libraries=${ncurses.out}/lib"
-  ] ++ stdenv.lib.optional (targetPlatform == hostPlatform && ! enableIntegerSimple) [
-    "--with-gmp-includes=${gmp.dev}/include" "--with-gmp-libraries=${gmp.out}/lib"
+  ] ++ stdenv.lib.optional (targetPlatform == hostPlatform && !enableIntegerSimple) [
+    "--with-gmp-includes=${targetPackages.gmp.dev}/include" "--with-gmp-libraries=${targetPackages.gmp.out}/lib"
   ] ++ stdenv.lib.optional (targetPlatform == hostPlatform && hostPlatform.libc != "glibc" && !targetPlatform.isWindows) [
     "--with-iconv-includes=${libiconv}/include" "--with-iconv-libraries=${libiconv}/lib"
   ] ++ stdenv.lib.optionals (targetPlatform != hostPlatform) [
@@ -150,7 +168,7 @@ stdenv.mkDerivation (rec {
   strictDeps = true;
 
   nativeBuildInputs = [
-    perl autoconf automake m4 python3
+    perl autoconf automake m4 python3 sphinx
     ghc bootPkgs.alex bootPkgs.happy bootPkgs.hscolour
   ];
 
